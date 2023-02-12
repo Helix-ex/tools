@@ -27,7 +27,7 @@ pub async fn verify_sig(request: &HttpRequest) -> bool {
 
     // Decoding the timestamp from headers.
     let ts = match request.headers().get("HM-TS") {
-        Some(timestamp) => timestamp.to_str().unwrap().parse::<u128>().unwrap(),
+        Some(timestamp) => timestamp.to_str().unwrap().parse::<u64>().unwrap(),
         None => {
             error!("Missing timestamp in Headers");
             return false;
@@ -39,6 +39,15 @@ pub async fn verify_sig(request: &HttpRequest) -> bool {
     info!("Public key  found {}", public_key);
     // Extract signature from string
     let signature = Signature::from_compact(&base64::decode(hm_sign).unwrap());
+    // let s :Signature;
+    match signature {
+        Ok(x) => println!("{:?}", x),
+        // s =x;},
+        Err(e) => {
+            println!("{:?}", e)
+            // s= Signature::from_compact(&base64::decode(hm_sign).unwrap()).unwrap();
+        }
+    }
 
     let message = Message::from_slice(
         &Sha256::digest(
@@ -58,10 +67,10 @@ pub async fn verify_sig(request: &HttpRequest) -> bool {
     let current_time = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
-        .as_millis();
-    if (current_time - ts) > 5000 {
-        return false;
-    }
+        .as_secs();
+     if (current_time - ts) > 5 {
+         return false;
+     }
 
     // Verify the signature.
     let verify = Secp256k1::verification_only();
@@ -81,7 +90,6 @@ pub async fn verify(req: HttpRequest) -> HttpResponse {
     let verify = verify_sig(&req).await;
     HttpResponse::Ok().body(verify.to_string())
 }
-
 
 // Testing the verify function.
 #[cfg(test)]
@@ -106,20 +114,44 @@ mod tests {
             .unwrap()
             .as_secs()
             .to_string();
-        let msg = format!("{}{}{}", ts, "GET", "127.0.0.1");
+        let msg = format!("{}{}{}", ts, "GET", "/");
         let msg = Sha256::digest(&msg.as_bytes());
         let msg = Message::from_slice(&msg).unwrap();
+
         let seckey = SecretKey::from_slice(&SECKEY).unwrap();
         let secp = Secp256k1::new();
-        let signature =secp.sign_ecdsa(&msg, &seckey);
-        let sign = base64::encode(signature.to_string());
+        let signature = secp.sign_ecdsa(&msg, &seckey);
+        let s = signature.serialize_compact();
+        let sign = base64::encode(s);
 
         let req = test::TestRequest::default()
             .insert_header(("HM-KEY", pubkey.to_string()))
-            .insert_header(("HM-SIGN", sign))
+            .insert_header(("HM-SIGN", sign.to_string()))
             .insert_header(("HM-TS", ts))
             .to_http_request();
         let result = verify_sig(&req).await;
-        assert_eq!(result, false);
+        assert_eq!(result, true)
+    }
+
+    #[test]
+    async fn create_header() {
+        let pubkey = PublicKey::from_slice(&PUBKEY).unwrap();
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            .to_string();
+        let msg = format!("{}{}{}", ts, "GET", "/verify");
+        let msg = Sha256::digest(&msg.as_bytes());
+        let msg = Message::from_slice(&msg).unwrap();
+
+        let seckey = SecretKey::from_slice(&SECKEY).unwrap();
+        let secp = Secp256k1::new();
+        let signature = secp.sign_ecdsa(&msg, &seckey).serialize_compact();
+        let sign = base64::encode(signature);
+
+        println!("{}", pubkey);
+        println!("{}", sign);
+        println!("{}", ts);
     }
 }
