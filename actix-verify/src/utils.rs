@@ -1,36 +1,38 @@
 use actix_web::HttpRequest;
 
-use super::*;
+use super::{error, info, HttpResponse};
+use secp256k1::{ecdsa::Signature, Message, PublicKey, Secp256k1};
+use sha2::{Digest, Sha256};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 // verification function
 pub async fn verify_sig(request: &HttpRequest) -> bool {
+    let hm_key: &str;
+    let hm_sign: &str;
+
     // Getting the public from headers
-    let hm_key = match request.headers().get("HM-KEY") {
-        Some(pk) => {
-            info!("{:?}", pk);
-            pk.to_str().unwrap()
-        }
-        None => {
-            error!("Public Key not Found");
-            return false;
-        }
-    };
+    if let Some(hmkey) = request.headers().get("HM-KEY") {
+        hm_key = hmkey.to_str().unwrap();
+    } else {
+        panic!("Public key not found");
+    }
 
     // Taking the signature from headers
-    let hm_sign = match request.headers().get("HM-SIGN") {
-        Some(sign) => sign.to_str().unwrap(),
-        None => {
-            error!("Missing Signature");
-            return false;
-        }
-    };
+    if let Some(hmsign) = request.headers().get("HM-KEY") {
+        hm_sign = hmsign.to_str().unwrap();
+    } else {
+        panic!("Signature key not found");
+    }
 
     // Decoding the timestamp from headers.
     let ts = match request.headers().get("HM-TS") {
-        Some(timestamp) => timestamp.to_str().unwrap().parse::<u64>().unwrap(),
+        Some(timestamp) => timestamp
+            .to_str()
+            .unwrap()
+            .parse::<u64>()
+            .expect("Malformed timestamp"),
         None => {
-            error!("Missing timestamp in Headers");
-            return false;
+            panic!("Missing timestamp in Headers");
         }
     };
 
@@ -39,26 +41,17 @@ pub async fn verify_sig(request: &HttpRequest) -> bool {
     info!("Public key  found {}", public_key);
     // Extract signature from string
     let signature = Signature::from_compact(&base64::decode(hm_sign).unwrap());
-    // let s :Signature;
+    let sign: Signature;
     match signature {
-        Ok(x) => println!("{:?}", x),
-        // s =x;},
+        Ok(s) => sign = s,
         Err(e) => {
-            println!("{:?}", e)
-            // s= Signature::from_compact(&base64::decode(hm_sign).unwrap()).unwrap();
+            panic!("{}", e)
         }
     }
 
     let message = Message::from_slice(
         &Sha256::digest(
-            format!(
-                "{}{}{}",
-                ts,
-                request.method().as_str(),
-                request.path(),
-                // request.query_string()
-            )
-            .as_bytes(),
+            format!("{}{}{}", ts, request.method().as_str(), request.path(),).as_bytes(),
         )[..],
     )
     .unwrap();
@@ -68,13 +61,14 @@ pub async fn verify_sig(request: &HttpRequest) -> bool {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs();
-     if (current_time - ts) > 5 {
-         return false;
-     }
+
+    if (current_time - ts) > 20 {
+        return false;
+    }
 
     // Verify the signature.
     let verify = Secp256k1::verification_only();
-    match verify.verify_ecdsa(&message, &signature.unwrap(), &public_key) {
+    match verify.verify_ecdsa(&message, &sign, &public_key) {
         Ok(()) => {
             info!("Success");
             true
